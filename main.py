@@ -23,6 +23,15 @@ class ToDoForm(StatesGroup):
     description = State()
 
 
+def get_markup():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton('Add', callback_data='add'))
+    markup.add(types.InlineKeyboardButton('Done', callback_data='done'))
+    markup.add(types.InlineKeyboardButton('List', callback_data='list'))
+    markup.add(types.InlineKeyboardButton('Delete', callback_data='delete'))
+    return markup
+
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     conn = sqlite3.connect('database.sql')
@@ -39,13 +48,7 @@ async def start(message: types.Message):
     cur.close()
     conn.close()
 
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton('Add', callback_data='add'))
-    markup.add(types.InlineKeyboardButton('Done', callback_data='done'))
-    markup.add(types.InlineKeyboardButton('List', callback_data='list'))
-    markup.add(types.InlineKeyboardButton('Delete', callback_data='delete'))
-
-    await message.answer('Hello, what do you want to do?', reply_markup=markup)
+    await message.answer('Hello, what do you want to do?', reply_markup=get_markup())
 
 
 
@@ -74,12 +77,7 @@ async def set_description(message: types.Message, state: FSMContext):
         cur.close()
         conn.close()
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton('Add', callback_data='add'))
-        markup.add(types.InlineKeyboardButton('Done', callback_data='done'))
-        markup.add(types.InlineKeyboardButton('List', callback_data='list'))
-        markup.add(types.InlineKeyboardButton('Delete', callback_data='delete'))
-        await message.answer('Created!', reply_markup=markup)
+        await message.answer('Created!', reply_markup=get_markup())
 
     await state.finish()
 
@@ -95,6 +93,7 @@ def check_id(id: str) -> str:
 async def delete(message: types.Message,  state: FSMContext):
     async with state.proxy() as data:
         error = check_id(message.text)
+
         if error:
             await DeleteToDo.id.set()
             await message.answer(error+'. Try again!')
@@ -105,29 +104,33 @@ async def delete(message: types.Message,  state: FSMContext):
         conn = sqlite3.connect('database.sql')
         cur = conn.cursor()
 
-        try:
-            cur.execute(f'DELETE FROM todo WHERE id={data["id"]}')
 
-            conn.commit()
-        except Exception:
-            await message.answer(f'to-do with such id doesn\'t exist!')
+        cur.execute(f'DELETE FROM todo WHERE id={data["id"]}')
+
+        if cur.rowcount == 0:
             await DeleteToDo.id.set()
+            await message.answer('No todo with such id. Enter correct id: ')
+            cur.close()
+            conn.close()
             return
+
+        conn.commit()
 
         cur.close()
         conn.close()
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton('Add', callback_data='add'))
-        markup.add(types.InlineKeyboardButton('Done', callback_data='done'))
-        markup.add(types.InlineKeyboardButton('List', callback_data='list'))
-        markup.add(types.InlineKeyboardButton('Delete', callback_data='delete'))
-        await message.answer('Deleted!', reply_markup=markup)
+        await message.answer('Deleted!', reply_markup=get_markup())
         await state.finish()
 
 
 @dp.message_handler(state=DoneToDo.id)
 async def done(message: types.Message,  state: FSMContext):
     async with state.proxy() as data:
+        error = check_id(message.text)
+        if error:
+            await DeleteToDo.id.set()
+            await message.answer(error + '. Try again!')
+            return
+
         data['id'] = message.text
 
         conn = sqlite3.connect('database.sql')
@@ -135,16 +138,18 @@ async def done(message: types.Message,  state: FSMContext):
 
         cur.execute(f'UPDATE todo SET (status) = (1) WHERE id={data["id"]}')
 
+        if cur.rowcount == 0:
+            await DoneToDo.id.set()
+            await message.answer('No todo with such id. Enter correct id: ')
+            cur.close()
+            conn.close()
+            return
+
         conn.commit()
         cur.close()
         conn.close()
 
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton('Add', callback_data='add'))
-    markup.add(types.InlineKeyboardButton('Done', callback_data='done'))
-    markup.add(types.InlineKeyboardButton('List', callback_data='list'))
-    markup.add(types.InlineKeyboardButton('Delete', callback_data='delete'))
-    await message.answer('Undated as done!', reply_markup=markup)
+    await message.answer('Undated as done!', reply_markup=get_markup())
     await state.finish()
 
 
@@ -161,7 +166,7 @@ async def callback(call):
         cur.execute(f'SELECT * FROM todo')
         todos = cur.fetchall()
         if not todos:
-            await call.message.answer('List is empty!')
+            await call.message.answer('List is empty!', reply_markup=get_markup())
             return
         info = ''
         for todo in todos:
@@ -171,7 +176,7 @@ async def callback(call):
         cur.close()
         conn.close()
 
-        await call.message.answer(info)
+        await call.message.answer(info, reply_markup=get_markup())
 
     elif call.data == 'done':
         await DoneToDo.id.set()
@@ -181,6 +186,10 @@ async def callback(call):
         await DeleteToDo.id.set()
         await call.message.answer('Enter id of to-do:')
 
+
+@dp.message_handler()
+async def help(message: types.Message):
+    await message.answer(f'Sorry! "{message.text}" is not a valid command.\n Available commands: ', reply_markup=get_markup())
 
 
 executor.start_polling(dp)
